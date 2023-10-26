@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Worm</title>
+	<link rel="stylesheet" type="text/css" href="./css/style.css">
+</head>
+<body>
+	<div class="title">Worm</div>
+	<div class="subtitle">WebGL Physics<div class="info">Done with three.js</div></div>
+
+	<script type="text/javascript" src="libs/vendors/three.js"></script>
+	<script type="text/javascript" src="libs/vendors/cannon.js"></script>
+	<script type="text/javascript" src="libs/vendors/tween.min.js"></script>
+	<!-- <script type="text/javascript" src="libs/vendors/oimo.min.js"></script> -->
+	<!-- <script type="text/javascript" src="libs/vendors/GLTFLoader.js"></script> -->
+	<script type="text/javascript" src="libs/vendors/inflate.min.js"></script>
+	<script type="text/javascript" src="libs/FlakesTexture.js"></script>
+	<script type="text/javascript" src="libs/vendors/FBXLoader.js"></script>
+	<script type="text/javascript" src="libs/vendors/OrbitControls.js"></script>
+	<script type="text/javascript" src="libs/vendors/TranslucentShader.js"></script>
+	<script type="text/javascript" src="libs/vendors/Tone.min.js"></script>
+	<script type="text/javascript">
+
+		const title = document.querySelector('.title');
+		const subtitle = document.querySelector('.subtitle');
+
+		// Filtering collision groups
+		const GROUP1 = 1;
+        const GROUP2 = 2;
+        const GROUP3 = 4;
+        const CHAIN_LENGTH = 60;
+        const textureLoader = new THREE.TextureLoader();
+		const modelFileUrl = "models/tube.glb";
+		const joints = [];
+		const jointsMesh = [];
+		const bodies = [], meshes = [];
+		const bones = [], constraints = [];
+		const ballBodies = [], ballMeshes = [];
+		let  world, mass, body, shape, timeStep=1/60;
+		let jointBody, constrainedBody, mouseConstraint;
+
+		const clock = new THREE.Clock();
+		const raycaster = new THREE.Raycaster();
+		const mouse = new THREE.Vector2();
+		
+
+		const markerMaterial = new THREE.MeshLambertMaterial( { color: 0xffffff, transparent:true, opacity:.3 } );
+		let camera, scene, renderer, mesh, constraintDown, pivot, clickMarker,  gplane=false ; 
+		let curve, tubegeometry, tubemesh;
+		let wigglyness = 2;
+		let wigglySpeed = .9;
+		let attenuation = 0.9;
+  		let attraction = 0.5;
+  		let toneStarted = false;
+  		let orig_wigglySpeed = wigglySpeed;
+  		let orig_wigglyness = wigglyness;
+  		let grabbed = false;
+  		let goalPos = new THREE.Vector3(0,0,0);
+    	let gForce = .5;
+    	let tubeMaterial;
+    	let light1, light2, light3, light4;
+
+  		var gain = new Tone.Volume(0).toMaster();
+		gain.set('volume', 0);
+
+		// tone
+		var synth = new Tone.PolySynth(3, Tone.Synth).toMaster();
+		synth.volume.value = -10;
+		synth.set("detune", -1200);
+
+		var dist = new Tone.Chorus(1, 10, 0.9).connect(gain);
+		var pingPong = new Tone.PingPongDelay("8n", 0.3).connect(gain);
+
+		var notes = ['A1', 'A2', 'A3', 'A4', 'C1', 'C2', 'C3', 'C4', 'E1', 'E2', 'E3', 'E4'];
+		var playNote = function playNote() {
+		duoSynth.triggerAttackRelease((0, _randomElement2.default)(notes), "16n");
+		};
+
+		var audioEventFuncs = {
+		bass: function bass() {},
+		kick: function kick() {},
+		snare: function snare() {}
+		};
+
+		var bass = new Tone.MonoSynth({
+		"volume": -10,
+		"envelope": {
+		  "attack": 0.01,
+		  "decay": 0.3,
+		  "release": 2
+		},
+		"filterEnvelope": {
+		  "attack": 0.001,
+		  "decay": 0.01,
+		  "sustain": 0.5,
+		  "baseFrequency": 200,
+		  "octaves": 2.6
+		}
+		}).connect(pingPong).connect(dist);
+
+		var bassPart = new Tone.Part(function (time, chord, note) {
+		bass.triggerAttackRelease(chord, note || "32n", time);
+
+		switch (chord) {
+		  case 'B6':
+		  case 'A6':
+		  case 'F6':
+		  case 'D6':
+		    audioEventFuncs['snare']();
+		    break;
+		  default:
+		    audioEventFuncs['bass']();
+		    break;
+		}
+		}, [["0:0", "G1", '8n'], ["0:2", "B6", '8n'], ["1:0", "G2", '8n'], ["1:2", "B6", '8n'], ["2:0", "G1", '8n'], ["2:2", "B6", '8n'], ["3:0", "G2", '8n'], ["3:2", "B6", '8n'], ["4:0", "B2", '8n'], ["4:2", "B6", '8n'], ["5:0", "A2", '8n'], ["5:2", "A6", '8n'], ["6:0", "F2", '8n'], ["6:2", "F6", '8n'], ["7:0", "D2", '8n'], ["7:2", "D6", '8n']]).start();
+
+		bassPart.loop = true;
+		bassPart.loopEnd = "8m";
+		bassPart.humanize = true;
+		bassPart.probability = 0.66;
+
+		var kick = new Tone.MembraneSynth({
+		"envelope": {
+		  "sustain": 0,
+		  "attack": 0.02,
+		  "decay": 0.8
+		},
+		"octaves": 10
+		}).connect(gain);
+
+		var kickPart = new Tone.Part(function (time, note) {
+		kick.triggerAttackRelease(note || "C2", "8n", time);
+		audioEventFuncs['kick']();
+		}, [["0:0"], ["1:0"], ["2:0"], ["3:0"], ["4:0"], ["4:2", 'C1'], ["5:0"], ["5:2", 'C1'], ["6:0"], ["6:2", 'C1'], ["7:0"], ["7:2", 'C1']]).start('0m');
+
+		kickPart.loop = true;
+		kickPart.loopEnd = "8m";
+		kickPart.humanize = true;
+		kickPart.probability = 0.5;
+
+		//set the transport 
+		Tone.Transport.bpm.value = 240;
+		Tone.Transport.start("+0.1");
+
+		const initCannon = _ => {
+			world = new CANNON.World();
+            world.quatNormalizeSkip = 0;
+            world.quatNormalizeFast = false;
+            world.solver.iterations = CHAIN_LENGTH;
+            world.gravity.set(0,0,0);
+            world.broadphase = new CANNON.NaiveBroadphase();
+
+	        var shape = new CANNON.Sphere(0.1);
+            jointBody = new CANNON.Body({ mass: 0 });
+            jointBody.addShape(shape);
+            jointBody.collisionFilterGroup = 0;
+            jointBody.collisionFilterMask = 0;
+            world.addBody(jointBody)
+
+		}
+
+		const buildChain = _ => {
+			var cubeGeo = new THREE.BoxGeometry( 10, 5, 10, 1, 1 );
+            var cubeMaterial = new THREE.MeshPhongMaterial( { color: 0xff8888, wireframe:true/*, transparent:true, opacity:0*/ } );
+            
+            const cube = new THREE.Mesh(cubeGeo, cubeMaterial);
+            cube.castShadow = true;
+
+			var b1;
+			let a = 0;
+
+			for(var i = CHAIN_LENGTH; i>-1; --i){
+	    		var b = cube.clone();
+	    		b.applyMatrix(new THREE.Matrix4().makeTranslation(  0,i*5, 0 ));
+				b.updateMatrixWorld(true);
+	    		//b.scale.multiply(new THREE.Vector3(2,2,2));
+	    		b.name = "rb"+i;
+	    		
+	    		jointsMesh.push(b)
+				scene.add(b);
+
+				boxShape = new CANNON.Box(new CANNON.Vec3(5,2.5,5));
+            	
+	            boxBody = new CANNON.Body({ mass: 3 });
+	            boxBody.addShape(boxShape);
+
+	            boxBody.position.set(b.position.x, b.position.y, b.position.z);
+	            boxBody.linearDamping=.5
+				boxBody.angularDamping=.2
+				boxBody.restitution = .5
+	            boxBody.velocity.x = 10;
+
+	            world.addBody(boxBody);
+	            joints.push(boxBody);
+	        
+	            if(i<CHAIN_LENGTH){
+	            	
+	                const c = new CANNON.PointToPointConstraint(joints[a], new CANNON.Vec3(0,2.5,0), joints[a-1], new CANNON.Vec3(0,-2.5,0))
+
+	                /*const c = new CANNON.ConeTwistConstraint(joints[a], joints[a-1],
+	                	  { pivotA: CANNON.Vec3(0, 2.5, 0),
+	                	   axisA: new CANNON.Vec3(0, 1, 0),  
+	                	   pivotB:new CANNON.Vec3(0,-2.5,0),
+	                	   axisB: new CANNON.Vec3(0, 1, 0)
+	                });*/
+
+	                /*c.enableMotor = true;
+	                c.setMotorSpeed = 205;
+	                c.setMotorForce = 300;*/
+	                world.addConstraint(c);
+	                constraints.push(c);
+
+	                c.update();
+	            }
+
+	            a++
+	           	b1 = b;	           
+	    	}
+
+		}
+
+		const initLights = _ => {
+			
+		    var sphere = new THREE.SphereBufferGeometry( 5, 16, 8 );
+
+		    light1 = new THREE.PointLight( 0x0040ff, 5, 150 );
+			//light1.add( new THREE.Mesh( sphere, new THREE.MeshBasicMaterial( { color: 0x0040ff } ) ) );
+			scene.add( light1 );
+
+			light2 = new THREE.PointLight( 0x0040ff, 5, 150 );
+			light2.add( new THREE.Mesh( sphere, new THREE.MeshBasicMaterial( { color: 0x0040ff } ) ) );
+			scene.add( light2 );
+
+			light3 = new THREE.PointLight( 0x80ff80, 5, 150 );
+			light3.add( new THREE.Mesh( sphere, new THREE.MeshBasicMaterial( { color: 0x80ff80 } ) ) );
+			scene.add( light3 );
+
+			light4 = new THREE.PointLight( 0xffaa00, 5, 150 );
+			light4.add( new THREE.Mesh( sphere, new THREE.MeshBasicMaterial( { color: 0xffaa00 } ) ) );
+			scene.add( light4 );
+
+		    //scene.add(camera);
+		}
+
+		const addSpheres = _ => {
+			 const texture_dots = textureLoader.load( 'textures/diagnolStripes.png', renderer );
+
+			 var normalMap = new THREE.CanvasTexture( new FlakesTexture() );
+			normalMap.wrapS = THREE.RepeatWrapping;
+			normalMap.wrapT = THREE.RepeatWrapping;
+			normalMap.repeat.x = 10;
+			normalMap.repeat.y = 6;
+			normalMap.anisotropy = 16;
+
+			texture_dots.wrapS = THREE.RepeatWrapping;
+			texture_dots.wrapT = THREE.RepeatWrapping;
+			texture_dots.repeat.set(2,2);
+			//var material = new THREE.MeshPhongMaterial( { color: 0xff0000, wireframe:false, side:THREE.DoubleSide, flatShading:false, emissiveColor:0xffffff, emissiveIntensity:1.8, transparent:false, opacity:.8,  map:texture_dots } );
+			var material = new THREE.MeshPhysicalMaterial( {
+				clearcoat: 1.0,
+				clearcoatRoughness: 0.,
+				metalness: 0.6,
+				roughness: 0.5,
+				color: 0x333333,
+				normalMap: normalMap,
+				normalScale: new THREE.Vector2( 0.15, 0.15 )
+			} );
+
+			shape = new THREE.SphereGeometry(40, 16, 16);
+            var sphere = new THREE.Mesh(shape, material);
+            sphere.receiveShadow = true;
+
+			/*let i, j, k;
+			for(i=0; i<3; i++){
+				for(j=0; j<3; j++){
+					for(k=0; k<3; k++){*/
+						var shape = new CANNON.Sphere(40);
+			            let sphereBody = new CANNON.Body({ 
+			            	mass: 0/*,
+			            	position:new CANNON.Vec3(-100 + i*100,-100 + j*100,-100 + k*100)*/
+			           	});
+
+			           	console.log(`sphereBody.position:${sphereBody.position}`)
+			            sphereBody.addShape(shape)
+			            world.addBody(sphereBody);
+			            ballBodies.push(sphereBody);
+			            const sphereClone = sphere.clone();
+			            ballMeshes.push(sphereClone);
+			        	scene.add(sphereClone);
+					/*}
+				}	
+			}*/
+		}
+
+		const vertexShader = (jointTransforms) => {
+			return `
+			varying vec3 vUv; 
+			varying vec4 vMvp;
+
+			attribute vec3 jointWeights;
+		    attribute vec3 jointIndices;
+
+		    uniform mat4 joints[${jointTransforms.length}];
+
+		    uniform sampler2D jointTexture;
+		    uniform vec2 jointTextureDim;
+		    
+			void main() {
+			  	mat4 jointMatrix = mat4( 0.0 );
+
+			  	vec3 jw = normalize(jointWeights.xyz);
+
+			  	for(int i=0; i<3; i++){
+			  		vec4 v0 = texture2D( jointTexture, vec2(0.0, jointIndices[i]) / jointTextureDim );
+			  		vec4 v1 = texture2D( jointTexture, vec2(1.0, jointIndices[i]) / jointTextureDim );
+			  		vec4 v2 = texture2D( jointTexture, vec2(2.0, jointIndices[i]) / jointTextureDim );
+			  		vec4 v3 = texture2D( jointTexture, vec2(3.0, jointIndices[i]) / jointTextureDim );
+
+			  		jointMatrix += jw[i] * mat4(v0, v1, v2, v3);
+			 	}
+
+			 	vec3 transformed = vec3( position );
+			 	vec4 worldPosition = modelMatrix * jointMatrix * vec4( transformed, 1.0 );
+
+			 	gl_Position = projectionMatrix * viewMatrix * worldPosition;
+			}`
+		}
+
+		const fragmentShader = _ => {
+			return `
+		    
+		    uniform vec3 colorA; 
+		    uniform vec3 colorB; 
+		    
+
+		    uniform float length;
+		     
+		    varying vec3 vUv;
+			varying vec4 vMvp;		    
+
+		    void main() {
+		        gl_FragColor = vec4(mix(colorA, colorB, vMvp.z), 1.0);
+		    }`
+		}
+
+		const initThree = _ => {
+
+			camera = new THREE.PerspectiveCamera(45,window.innerWidth/window.innerHeight,1,2000);
+			camera.position.set( 10, 0, -380 );
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color( 0x000000 );
+
+			const hlight = new THREE.HemisphereLight( 0xffffff, 0x444444 );
+			hlight.position.set( 0, 20, 0 );
+			scene.add( hlight );
+/*
+			const light = new THREE.DirectionalLight( 0xffffff );
+			light.position.set( 0, 20, 10 );
+			light.castShadow = true;
+			light.shadow.camera.top = 180;
+			light.shadow.camera.bottom = - 100;
+			light.shadow.camera.left = - 120;
+			light.shadow.camera.right = 120;
+			scene.add( light );*/
+
+
+
+			renderer = new THREE.WebGLRenderer( { antialias: true } );
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			renderer.shadowMap.enabled = true;
+
+			document.body.appendChild( renderer.domElement );
+
+			controls = new THREE.OrbitControls( camera, renderer.domElement );
+			controls.target.set( 0, 0, 0 );
+			controls.update();
+			controls.minDistance = 300;
+			controls.maxDistance = 500;
+
+			addSpheres();
+			//const loader = new THREE.GLTFLoader();
+			buildChain();
+
+			const path = [];
+
+			for(var i=0; i<CHAIN_LENGTH; i++){
+				path.push(new THREE.Vector3(joints[i].position.x, joints[i].position.y, joints[i].position.z))
+			}
+
+			curve = new THREE.CatmullRomCurve3(path);
+			
+			//
+			const texture_diag = textureLoader.load( 'textures/dots.png', renderer );
+			texture_diag.wrapS = THREE.RepeatWrapping;
+			texture_diag.wrapT = THREE.RepeatWrapping;
+			texture_diag.repeat.set(10,1);
+
+			tubegeometry = new THREE.TubeBufferGeometry( curve, joints.length, 5, 6, false );
+			tubegeometry.usage = true;
+
+			var tubeMaterial = new THREE.MeshPhongMaterial( { color: 0xffcc00, wireframe:false, side:THREE.DoubleSide, flatShading:true, map:texture_diag } );
+
+			/*let uniforms = {
+		        colorB: {type: 'vec3', value: new THREE.Color(0xACB6E5)},
+		        colorA: {type: 'vec3', value: new THREE.Color(0x74ebd5)},
+		        length: {type: 'float', value:0}
+		    }
+
+		    tubeMaterial =  new THREE.ShaderMaterial({
+			    uniforms: uniforms,
+			    fragmentShader: fragmentShader(),
+			    vertexShader: vertexShader(),
+			    side:THREE.DoubleSide,
+			    flatShading:true
+			})*/
+
+			var imgTexture = textureLoader.load( 'textures/white.jpg' );
+			var thicknessTexture = textureLoader.load( 'textures/thickness4.png' );
+			imgTexture.wrapS = imgTexture.wrapT = THREE.RepeatWrapping;
+
+			var shader = THREE.TranslucentShader;
+			var uniforms = THREE.UniformsUtils.clone( shader.uniforms );
+
+			uniforms[ 'map' ].value = imgTexture;
+
+			uniforms[ 'diffuse' ].value = new THREE.Vector3( 1.0, 0.2, 0.2 );
+			uniforms[ 'shininess' ].value = 300;
+
+			uniforms[ 'thicknessMap' ].value = thicknessTexture;
+			uniforms[ 'thicknessColor' ].value = new THREE.Vector3( 0.3, 0.3, 0.3 );
+			uniforms[ 'thicknessDistortion' ].value = 0.3;
+			uniforms[ 'thicknessAmbient' ].value = 0.2;
+			uniforms[ 'thicknessAttenuation' ].value = 0.2;
+			uniforms[ 'thicknessPower' ].value = 2.0;
+			uniforms[ 'thicknessScale' ].value = 16.0;
+
+			tubeMaterial = new THREE.ShaderMaterial( {
+				uniforms: uniforms,
+				vertexShader: shader.vertexShader,
+				fragmentShader: shader.fragmentShader,
+				lights: true,
+				side:THREE.DoubleSide
+			} );
+
+			tubeMaterial.extensions.derivatives = true;
+
+			tubemesh = new THREE.Mesh( tubegeometry, tubeMaterial );
+
+			scene.add(tubemesh);
+			//scene.add(mesh);
+			camera.lookAt(scene.position);
+
+			
+
+		}
+
+
+		
+		const setClickMarker = (x,y,z) => {
+            if(!clickMarker){
+                var shape = new THREE.SphereGeometry(5, 5, 5);
+                clickMarker = new THREE.Mesh(shape, markerMaterial);
+                scene.add(clickMarker);
+                light1.parent = clickMarker;
+            }
+
+            clickMarker.visible = true;
+            //console.log(x,y,z);
+            light1.intensity = 5;
+            clickMarker.position.set(x,y,z);
+        }
+
+        const removeClickMarker = _ =>{
+          	clickMarker.visible = false;
+          	light1.intensity = 0;
+        }
+
+
+		const addJointToBone = bone => {
+			bones.push(bone);
+
+			const bonePosition = new THREE.Vector3().setFromMatrixPosition(bone.matrixWorld).add(bone.position);
+			
+			var mass = 3, radius = 1.3;
+            boxShape = new CANNON.Box(new CANNON.Vec3(5,5,5));
+            
+            boxBody = new CANNON.Body({ mass: mass });
+            boxBody.addShape(boxShape);
+            boxBody.position.set(bonePosition.x, bonePosition.y, bonePosition.z);
+            boxBody.linearDamping=.5
+			boxBody.angularDamping=.2
+			boxBody.restitution = .5
+            world.addBody(boxBody);
+            joints.push(boxBody);
+        
+
+			var cubeGeo = new THREE.BoxGeometry( 10, 10, 10, 10, 10 );
+            var cubeMaterial = new THREE.MeshPhongMaterial( { color: 0x888888 } );
+            
+            cubeMesh = new THREE.Mesh(cubeGeo, cubeMaterial);
+            cubeMesh.castShadow = true;
+            jointsMesh.push(cubeMesh);
+            scene.add(cubeMesh);
+		}
+
+		const moveJointToPoint = (x,y,z) => {
+            // Move the joint body to a new position
+            jointBody.position.set(x,y,z);
+            mouseConstraint.update();
+        }
+
+        const removeJointConstraint = _ => {
+          // Remove constriant from world
+          //console.log('removeJointConstraint');
+          world.removeConstraint(mouseConstraint);
+          mouseConstraint = false;
+        }
+
+		const addMouseConstraint = (x,y,z,body) => {
+          constrainedBody = body;
+          //console.log(body);
+
+          var v1 = new CANNON.Vec3(x,y,z).vsub(constrainedBody.position);
+
+          // Apply anti-quaternion to vector to tranform it into the local body coordinate system
+          var antiRot = constrainedBody.quaternion.inverse();
+          
+          pivot = antiRot.vmult(v1); // pivot is not in local body coordinates
+
+          // Move the cannon click marker particle to the click position
+          jointBody.position.set(x,y,z);
+
+          // Create a new constraint
+          // The pivot for the jointBody is zero
+          mouseConstraint = new CANNON.PointToPointConstraint(constrainedBody, pivot, jointBody, new CANNON.Vec3(0,0,0));
+
+          // Add the constriant to world
+          world.addConstraint(mouseConstraint);
+        }
+
+		const findNearestIntersectingObject = objects => {
+
+			raycaster.setFromCamera( mouse, camera );
+            var hits = raycaster.intersectObjects(objects);
+            var closest = false;
+            if (hits.length > 0) {
+                closest = hits[0];
+            }
+
+            return closest;
+        }
+
+       	const setScreenPerpCenter = point => {
+            // If it does not exist, create a new one
+            if(!gplane) {
+              const planeGeo = new THREE.PlaneGeometry(1000,1000);
+              const material = new THREE.MeshLambertMaterial( { color: 0x777777 } );
+              var plane = gplane = new THREE.Mesh(planeGeo, material);
+              plane.visible = false; // Hide it..
+              scene.add(gplane);
+            }
+            // Center at mouse position
+            gplane.position.copy(point);
+            // Make it face toward the camera
+            gplane.quaternion.copy(camera.quaternion);
+        }
+
+		const onMouseDown = e => {
+
+			if(!toneStarted){
+				
+				
+				console.log('audio is ready');
+				toneStarted = true;
+			}
+
+			mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+			mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+
+			const entity = findNearestIntersectingObject(jointsMesh);
+            const pos = entity.point;
+
+            if(pos && entity.object.geometry instanceof THREE.BoxGeometry){
+            	grabbed = true;
+            	controls.enableRotate = false;
+
+                constraintDown = true;
+          		setClickMarker(pos.x,pos.y,pos.z);
+          		setScreenPerpCenter(pos);
+
+                var idx = jointsMesh.indexOf(entity.object);
+
+                if(idx !== -1){
+                	//console.log('should add mouse constraint.')
+                    addMouseConstraint(pos.x,pos.y,pos.z, joints[idx]);
+                }
+            }
+		}
+
+		
+		var lastx,lasty,last;
+
+        function projectOntoPlane(screenX,screenY,thePlane) {
+            var x = screenX;
+            var y = screenY;
+            var now = new Date().getTime();
+            // project mouse to that plane
+            var hit = findNearestIntersectingObject([thePlane]);
+            lastx = x;
+            lasty = y;
+            last = now;
+            if(hit)
+                return hit.point;
+            return false;
+        }
+
+		const onMouseMove = e => {
+			if (gplane && mouseConstraint) {
+				mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+				mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+
+                var pos = projectOntoPlane(mouse.x, mouse.y,gplane);
+                
+                if(pos){
+                    setClickMarker(pos.x,pos.y,pos.z,scene);
+                    moveJointToPoint(pos.x,pos.y,pos.z);
+               	}
+            }
+		}
+
+		const onMouseUp = e => {
+			constraintDown = false;
+			 controls.enableRotate = true;
+			removeClickMarker();
+          	removeJointConstraint();
+		}
+
+		const initEvents = _ => {
+			window.addEventListener('resize', onWindowResize, false );
+            window.addEventListener('mousemove', onMouseMove, false );
+            window.addEventListener('mousedown', onMouseDown, false );
+            window.addEventListener('mouseup', onMouseUp, false );
+		}
+
+		const onWindowResize = _ => {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize( window.innerWidth, window.innerHeight );
+		}
+
+		const remap = (value, in_min, in_max, out_min, out_max) => {
+		  return (value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+		}
+
+	    const updatePhysics = time => {
+	    	world.step(timeStep);
+	    	var delta = new THREE.Vector3();
+	    	var scl = 100;
+	    	let zoom = controls.target.distanceTo( controls.object.position );
+	    	if(zoom < controls.minDistance) zoom = controls.minDistance;
+	    	else if(zoom>controls.maxDistance)
+	    		zoom = controls.maxDistance;
+
+	    	zoom = remap(zoom, controls.minDistance, controls.maxDistance, .25, .75)
+	    	//console.log(zoom);
+
+	    	constraints.map( c => {
+	    		const b1 = c.bodyA;
+          		const b2 = c.bodyB;
+
+          		delta.copy(b1.position);
+		        delta.sub(b2.position);	
+		        delta.normalize();
+		        delta.multiplyScalar(scl);
+		        delta.lerp(b2.velocity, zoom) ;// .55
+
+		        b2.velocity.copy(delta);
+	    	});
+
+	    	/*const len = joints.length - 2;
+
+	    	const p = new THREE.Vector3(
+	    		joints[len].position.x,
+	    		joints[len].position.y, 
+	    		joints[len].position.z);
+
+	    	camera.lookAt(p);*/
+
+	    	for(var i=0; i<ballBodies.length-1; i++){
+	    		ballMeshes[i].position.copy(ballBodies[i].position);
+	    	}
+
+	    	for(var i=0; i<joints.length-1; i++){
+	    		const position = new THREE.Vector3(joints[i].position.x, joints[i].position.y, joints[i].position.z);
+
+
+	    		var frc = position.clone().sub(goalPos);
+                frc.multiplyScalar(-Math.pow(gForce / Math.max(1, frc.length()), 2));
+
+
+	    		const body = joints[i];
+	    		//console.log(body);
+	    		body.velocity.x *= attenuation;
+	            body.velocity.y *= attenuation;
+	            body.velocity.z *= attenuation;
+
+	            body.angularVelocity.x *= attenuation;
+	            body.angularVelocity.y *= attenuation;
+	            body.angularVelocity.z *= attenuation;
+
+	            body.velocity.x -= body.position.x * attraction;
+	            body.velocity.y -= body.position.y * attraction;
+	            body.velocity.z -= body.position.z * attraction;
+	           
+	         
+	    		jointsMesh[i].position.copy(joints[i].position);
+	    		jointsMesh[i].quaternion.copy(joints[i].quaternion);
+
+	    		tubemesh.geometry.parameters.path.points[i].copy(joints[i].position);
+	    		
+
+		    	tubemesh.geometry.copy(new THREE.TubeBufferGeometry( tubemesh.geometry.parameters.path, joints.length, 5, 6, false ));
+
+	    		tubemesh.geometry.needsUpdate = true;
+	    	}
+	    }
+
+	    const updateLights = (time) => {
+    	
+    		/*light1.position.x = Math.sin( time * 0.7 ) * 130;
+			light1.position.y = Math.cos( time * 0.5 ) * 140;
+			light1.position.z = Math.cos( time * 0.3 ) * 130;*/
+
+			light2.position.x = Math.cos( time * 0.3 ) * 130;
+			light2.position.y = Math.sin( time * 0.5 ) * 140;
+			light2.position.z = Math.sin( time * 0.7 ) * 130;
+
+			light3.position.x = Math.sin( time * 0.7 ) * 130;
+			light3.position.y = Math.cos( time * 0.3 ) * 140;
+			light3.position.z = Math.sin( time * 0.5 ) * 130;
+
+			light4.position.x = Math.sin( time * 0.3 ) * 130;
+			light4.position.y = Math.cos( time * 0.7 ) * 140;
+			light4.position.z = Math.sin( time * 0.5 ) * 130;
+	    }
+
+	    const updateMaterials = time => {
+	    	/*const len = joints.length -2;
+
+	    	const head = new THREE.Vector3(joints[len].position.x, joints[len].position.y, joints[len].position.z);
+
+	    	const l = head.distanceTo( scene.position );
+	    	
+	    	tubeMaterial.uniforms.length.value = l * 2;*/
+	    }
+
+	    const animate = time => {
+			requestAnimationFrame( animate );
+			//controls.update();
+			updatePhysics(time);
+			updateMaterials(time);
+			updateLights(time/1000);
+			var delta = clock.getDelta();
+			
+
+			renderer.render( scene, camera );
+		}
+
+		initCannon();
+		initThree();
+		initLights();
+		initEvents();
+		
+		title.classList.add('show')
+		subtitle.classList.add('show')
+		
+		animate();
+
+	</script>
+</body>
+</html>
